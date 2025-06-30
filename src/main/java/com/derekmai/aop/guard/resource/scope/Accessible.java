@@ -11,52 +11,47 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Predicate;
 
 import static com.derekmai.aop.guard.resource.scope.ScopeAuthority.filterAuthorityByScopeAndRoles;
 import static com.derekmai.aop.guard.resource.scope.ScopeAuthority.parseAuthorities;
 
 /**
- * Contract interface to define scope-based access control for domain objects.
- * <p>
- * Implementing classes should expose getter methods (e.g., {@code getProject()}, {@code getTeam()})
- * that correspond to scope types used in authority strings (e.g., {@code ROLE_PROJECT_ADMIN_123}).
- * This interface evaluates whether a given {@link UserDetails} instance has access to the current object
- * based on dynamically matched scopes and roles.
- * </p>
+ * Interface that defines scope-based access control logic for domain objects.
  *
- * <p>
- * Each authority is expected to follow the format: {@code ROLE_<SCOPE>_<ROLE>_<RESOURCE_ID>},
- * where:
+ * <p>Classes implementing this interface should expose getter methods that correspond
+ * to scope types, such as {@code getProject()}, {@code getTeam()}, etc.
+ * These scope types are matched against authorities in the format:</p>
+ *
+ * <pre>{@code
+ * ROLE_<SCOPE>_<ROLE>_<RESOURCE_ID>
+ * }</pre>
+ *
+ * <p>Where:
  * <ul>
- *   <li>{@code SCOPE} is the logical scope (e.g., project, team)</li>
- *   <li>{@code ROLE} is the user's role within that scope (e.g., ADMIN, VIEWER)</li>
- *   <li>{@code RESOURCE_ID} identifies the target resource (e.g., 123)</li>
+ *   <li>{@code SCOPE} is the scope type (e.g., project, team)</li>
+ *   <li>{@code ROLE} is the role within that scope (e.g., ADMIN, USER)</li>
+ *   <li>{@code RESOURCE_ID} is the ID of the specific resource (e.g., "1234")</li>
  * </ul>
  * </p>
  *
- * <p>
- * For the object to be matched against a scope, it must return a value implementing
- * {@link com.derekmai.aop.guard.resource.Identifiable}.
- * </p>
+ * <p>Scope fields must return an object implementing {@link Identifiable} so its ID can be matched
+ * against the authority string.</p>
  *
- * <p>
- * This interface is intended to be used by AOP components such as {@code GuardResourceAspect}
- * to perform authorization checks declaratively.
- * </p>
- *
- * @see com.derekmai.aop.guard.resource.Identifiable
+ * <p>This interface is primarily intended to be used in AOP-based security mechanisms
+ * to enforce access rules declaratively.</p>
  */
 public interface Accessible {
 
     Logger log = LoggerFactory.getLogger(Accessible.class);
 
     /**
-     * Evaluates whether the current object is accessible by the given {@link UserDetails}
-     * based on a map of scope types and their required roles.
+     * Validates if the current object is accessible by the given user, based on one or more scope-role definitions.
      *
-     * @param userDetails the user whose authorities are to be evaluated
-     * @param scopeRoles  a map where keys are scope types (e.g., "project") and values are required roles
+     * <p>Access is granted if the user has at least one matching authority for any of the provided scope definitions.</p>
+     *
+     * @param userDetails the user attempting access
+     * @param scopeRoles a list of scope definitions defining required roles per scope
+     * @throws AccessDeniedException if access is not permitted
      */
     default void isAccessibleBy(UserDetails userDetails, List<ScopeDefinition> scopeRoles) {
 
@@ -80,12 +75,20 @@ public interface Accessible {
         }
     }
 
+
     /**
-     * Checks if the given user Details have access to the given scope definition
+     * Evaluates whether the user has access for a specific scope definition on the current object.
      *
-     * @param scope       Scope definition
-     * @param userDetails the user for whom access is being evaluated
-     * @return a {@link boolean} indicating whether access is granted for that scope
+     * <p>This involves:
+     * <ul>
+     *   <li>Finding the getter method for the scope (e.g., {@code getTeam()})</li>
+     *   <li>Comparing the ID of the object returned by that method to the user's authority</li>
+     * </ul>
+     * </p>
+     *
+     * @param scope the scope and required roles
+     * @param userDetails the user being evaluated
+     * @return {@code true} if access is granted; {@code false} otherwise
      */
     default boolean checkScopeAccess(ScopeDefinition scope,
                                      UserDetails userDetails) {
@@ -122,11 +125,14 @@ public interface Accessible {
     }
 
     /**
-     * Resolves the getter method corresponding to a given scope type.
-     * For example, for scope "project", it looks for a method named {@code getProject()}.
+     * Finds the getter method that matches the given scope type.
      *
-     * @param scopeType the logical name of the scope
-     * @return a {@link Method} instance if found, or {@code null} otherwise
+     * <p>For example, scopeType {@code "team"} would map to {@code getTeam()}.</p>
+     *
+     * @param scopeType the logical scope name (case-insensitive)
+     * @return a {@link Method} to access the scope object
+     * @throws NoSuchMethodException if no matching method exists
+     * @throws IllegalArgumentException if scope type is null or empty
      */
     default Method findMethodForScope(String scopeType) throws NoSuchMethodException, IllegalArgumentException {
         if (Objects.isNull(scopeType) || scopeType.isEmpty()) {
@@ -143,23 +149,25 @@ public interface Accessible {
     }
 
     /**
-     * Checks whether the provided {@code scopeObject} matches the {@code resourceId}
-     * from the user's authority, by comparing it to the object's ID via the {@link Identifiable} interface.
+     * Checks whether the given scope object is associated with the authority's resource ID.
      *
-     * @param scopeObject         the domain object (e.g., project, team)
-     * @param authorityResourceId the resource ID from the authority
-     * @return {@code true} if the resource IDs match; {@code false} otherwise
+     * <p>This comparison is done by calling {@code getId()} on the object and comparing it
+     * to the resource ID in the authority.</p>
+     *
+     * @param scopedObject the actual domain object returned by the getter (e.g., a Project or Team)
+     * @param authorityResourceId the resource ID extracted from the authority string
+     * @return {@code true} if the object ID matches the authority ID; {@code false} otherwise
      */
-    static boolean checkObjectAssociation(Object scopeObject, String authorityResourceId) {
+    static boolean checkObjectAssociation(Object scopedObject, String authorityResourceId) {
         if (authorityResourceId == null) {
             return false;
         }
-        if (scopeObject instanceof Identifiable) {
-            Identifiable identifiable = (Identifiable) scopeObject;
+        if (scopedObject instanceof Identifiable) {
+            Identifiable identifiable = (Identifiable) scopedObject;
             String scopeObjectId = identifiable.getId().toString();
             return authorityResourceId.equals(scopeObjectId);
         }
-        log.debug("Object of type {} does not implement Identifiable", scopeObject.getClass());
+        log.debug("Object of type {} does not implement Identifiable", scopedObject.getClass());
         return false;
     }
 }

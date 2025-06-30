@@ -5,7 +5,17 @@ import com.derekmai.aop.guard.resource.user.UserDetailsResolver;
 import java.util.Objects;
 
 /**
- * Helper class representing a key to group scopes by user resolution parameters.
+ * Represents a unique combination of user resolution logic based on a user ID parameter and a resolver class.
+ *
+ * <p>This class is typically used to group {@link ScopeDefinition}s that require user-based access control
+ * via a {@link UserDetailsResolver}. It enables consistent identification of scopes that rely on the same
+ * user resolution strategy.</p>
+ *
+ * <p>Two instances of this class are considered equal if both the {@code userIdParam} and {@code userResolver}
+ * are equal.</p>
+ *
+ * @see ScopeDefinition
+ * @see UserDetailsResolver
  */
 public class UserResolution {
 
@@ -13,21 +23,34 @@ public class UserResolution {
     private final Class<? extends UserDetailsResolver> userResolver;
 
     /**
-     * All params constructor.
-     * @param userIdParam user id parameter that will be used for obtaining a valid user.
-     * @param userResolver User resolver that will be used for resolving the user identity based on User ID's parameter.
+     * Constructs a new {@code UserResolution} with the given parameter and resolver class.
+     *
+     * @param userIdParam   the parameter name used to extract the user ID from the method arguments
+     * @param userResolver  the class used to resolve a {@link org.springframework.security.core.userdetails.UserDetails}
+     *                      object from the user ID
+     * @throws NullPointerException if any of the parameters are {@code null}
      */
     public UserResolution(String userIdParam, Class<? extends UserDetailsResolver> userResolver) {
         this.userIdParam = Objects.requireNonNull(userIdParam,
-                "User Id parameter is required when creating an instance of ScopeKey");
+                "User Id parameter is required when creating an instance of UserResolution");
         this.userResolver = Objects.requireNonNull(userResolver,
-                "User Resolver class is required when creating an instance of ScopeKey");
+                "User Resolver class is required when creating an instance of UserResolution");
     }
 
+    /**
+     * Returns the name of the parameter used to identify the user ID.
+     *
+     * @return the user ID parameter name
+     */
     public String getUserIdParam() {
         return userIdParam;
     }
 
+    /**
+     * Returns the resolver class responsible for converting a user ID to a {@link org.springframework.security.core.userdetails.UserDetails}.
+     *
+     * @return the user resolver class
+     */
     public Class<? extends UserDetailsResolver> getUserResolver() {
         return userResolver;
     }
@@ -38,9 +61,9 @@ public class UserResolution {
         if (o == null) return false;
         if (!(o instanceof UserResolution)) return false;
 
-        UserResolution userResolution = (UserResolution) o;
-        return Objects.equals(userIdParam, userResolution.userIdParam)
-                && Objects.equals(userResolver, userResolution.userResolver);
+        UserResolution that = (UserResolution) o;
+        return Objects.equals(userIdParam, that.userIdParam)
+                && Objects.equals(userResolver, that.userResolver);
     }
 
     @Override
