@@ -7,6 +7,7 @@ import org.springframework.security.core.GrantedAuthority;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Parsed representation of a user's authority string, broken into scope type, role, and resource ID.
@@ -65,5 +66,11 @@ public class ScopeAuthority {
             throw new InvalidAuthorityException(String.format("Authority %s is invalid.", authority), e);
         }
 
+    }
+    
+    public static Predicate<ScopeAuthority> filterAuthorityByScopeAndRoles(String scopeType,
+                                                                           List<String> requiredRolesList) {
+        return authority -> authority.getScopeType().equals(scopeType)
+                && requiredRolesList.contains(authority.getRole());
     }
 }
