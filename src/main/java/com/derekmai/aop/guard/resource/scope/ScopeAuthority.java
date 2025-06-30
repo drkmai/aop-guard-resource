@@ -7,8 +7,6 @@ import org.springframework.security.core.GrantedAuthority;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * Parsed representation of a user's authority string, broken into scope type, role, and resource ID.
