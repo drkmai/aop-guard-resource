@@ -2,6 +2,7 @@ package com.derekmai.aop.guard.resource;
 
 import com.derekmai.aop.guard.resource.scope.Accessible;
 import com.derekmai.aop.guard.resource.scope.ScopeDefinition;
+import com.derekmai.aop.guard.resource.scope.UserResolution;
 import com.derekmai.aop.guard.resource.user.DefaultUserDetailsResolver;
 import com.derekmai.aop.guard.resource.user.UserDetailsResolver;
 import org.aopalliance.intercept.MethodInvocation;
@@ -80,7 +81,7 @@ public class GuardResourceAspect {
 
       Object result = invocation.proceed();
       if (Objects.isNull(result)) {
-        log.warn("Method returned null result");
+        log.warn("Method returned null result. There's nothing to Guard.");
         return null;
       }
 
@@ -90,11 +91,11 @@ public class GuardResourceAspect {
       }
 
       ScopeDefinition[] scopes = guardResource.scopes();
-      Map<ScopeKey, List<ScopeDefinition>> groupedScopes = groupScopesByResolution(scopes);
+      Map<UserResolution, List<ScopeDefinition>> groupedScopes = groupScopesDefinitionsByUserResolution(scopes);
 
       boolean allGroupedScopedHaveAllowedAccess = true;
-      for (Map.Entry<ScopeKey, List<ScopeDefinition>> entry : groupedScopes.entrySet()) {
-        ScopeKey key = entry.getKey();
+      for (Map.Entry<UserResolution, List<ScopeDefinition>> entry : groupedScopes.entrySet()) {
+        UserResolution key = entry.getKey();
         UserDetails userDetails = resolveUserDetails(key, method, invocation.getArguments());
 
         if (!validateScopes(entry.getValue(), userDetails, result)) {
@@ -126,17 +127,17 @@ public class GuardResourceAspect {
    * user ID parameter name and user resolver class.
    *
    * @param scopes array of scope definitions from the annotation
-   * @return a map grouping scopes by their {@link ScopeKey}
+   * @return a map grouping scopes by their {@link UserResolution}
    */
-  private Map<ScopeKey, List<ScopeDefinition>> groupScopesByResolution(ScopeDefinition[] scopes) {
+  private Map<UserResolution, List<ScopeDefinition>> groupScopesDefinitionsByUserResolution(ScopeDefinition[] scopes) {
     return Arrays.stream(scopes)
             .collect(Collectors.groupingBy(
-                    scope -> new ScopeKey(scope.userIdParam(), scope.userResolver())
+                    scope -> new UserResolution(scope.userIdParam(), scope.userResolver())
             ));
   }
 
   /**
-   * Resolves {@link UserDetails} based on the given {@link ScopeKey} configuration,
+   * Resolves {@link UserDetails} based on the given {@link UserResolution} configuration,
    * the intercepted method, and its arguments.
    *
    * <p>
@@ -144,16 +145,18 @@ public class GuardResourceAspect {
    * user details from the method parameter; otherwise, resolves from the Spring Security context.
    * </p>
    *
-   * @param key the scope key defining user resolution parameters
+   * @param userResolution the user resolution
    * @param method the intercepted method
    * @param arguments the method arguments
    * @return the resolved user details
    * @throws AccessDeniedException if user details cannot be resolved
    */
-  private UserDetails resolveUserDetails(ScopeKey key, Method method, Object[] arguments) throws AccessDeniedException {
+  private UserDetails resolveUserDetails(UserResolution userResolution, Method method,
+                                         Object[] arguments) throws AccessDeniedException {
     try {
-      if (!key.userIdParam.isEmpty() && !key.userResolver.equals(DefaultUserDetailsResolver.class)) {
-        return resolveUserDetailsFromParam(method, arguments, key);
+      if (!userResolution.getUserIdParam().isEmpty()
+              && !userResolution.getUserResolver().equals(DefaultUserDetailsResolver.class)) {
+        return resolveUserDetailsFromParam(userResolution, method, arguments);
       } else {
         return resolveDefaultUserDetails();
       }
@@ -169,16 +172,17 @@ public class GuardResourceAspect {
    *
    * @param method the intercepted method
    * @param arguments the method arguments
-   * @param key the scope key containing user resolution info
+   * @param userResolution the User Resolution
    * @return resolved user details
    * @throws AccessDeniedException if the user ID parameter is not found or resolution fails
    */
-  private UserDetails resolveUserDetailsFromParam(Method method, Object[] arguments, ScopeKey key) throws AccessDeniedException {
+  private UserDetails resolveUserDetailsFromParam(UserResolution userResolution, Method method,
+                                                   Object[] arguments) throws AccessDeniedException {
     for (int i = 0; i < method.getParameterCount(); i++) {
       Parameter parameter = method.getParameters()[i];
-      if (parameter.getName().equals(key.userIdParam)) {
+      if (parameter.getName().equals(userResolution.getUserIdParam())) {
         Object userId = arguments[i];
-        UserDetailsResolver userDetailsResolver = context.getBean(key.userResolver);
+        UserDetailsResolver userDetailsResolver = context.getBean(userResolution.getUserResolver());
         return userDetailsResolver.resolve(userId);
       }
     }
@@ -248,30 +252,4 @@ public class GuardResourceAspect {
     }
   }
 
-  /**
-   * Helper class representing a key to group scopes by user resolution parameters.
-   */
-  private static class ScopeKey {
-    final String userIdParam;
-    final Class<? extends UserDetailsResolver> userResolver;
-
-    ScopeKey(String userIdParam, Class<? extends UserDetailsResolver> userResolver) {
-      this.userIdParam = userIdParam;
-      this.userResolver = userResolver;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) return true;
-      if (o == null || getClass() != o.getClass()) return false;
-      ScopeKey scopeKey = (ScopeKey) o;
-      return Objects.equals(userIdParam, scopeKey.userIdParam) &&
-              Objects.equals(userResolver, scopeKey.userResolver);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(userIdParam, userResolver);
-    }
-  }
 }
