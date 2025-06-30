@@ -3,16 +3,14 @@ package com.derekmai.aop.guard.resource.scope;
 import com.derekmai.aop.guard.resource.Identifiable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
+import static com.derekmai.aop.guard.resource.scope.ScopeAuthority.parseAuthorities;
 
 /**
  * Contract interface to define scope-based access control for domain objects.
@@ -55,60 +53,51 @@ public interface Accessible {
    *
    * @param userDetails the user whose authorities are to be evaluated
    * @param scopeRoles  a map where keys are scope types (e.g., "project") and values are required roles
-   * @return {@code true} if <b>any</b> of the specified scope-role conditions match the user's authorities
    */
-  default boolean isAccessibleBy(UserDetails userDetails, Map<String, String[]> scopeRoles) {
-    if (userDetails == null || scopeRoles == null || scopeRoles.isEmpty()) {
-      return false;
-    }
-    return scopeRoles.entrySet().stream()
-        .map(entry -> createScopeAccessCheck(entry, userDetails))
-        .anyMatch(ScopeAccessCheck::hasAccess);
+  default void isAccessibleBy(UserDetails userDetails, List<ScopeDefinition> scopeRoles) {
+
+      if (Objects.isNull(userDetails)) {
+          throw new AccessDeniedException("User details is null.");
+      }
+      if (Objects.isNull(scopeRoles)) {
+          throw new AccessDeniedException("Scope roles are null.");
+      }
+      if (scopeRoles.isEmpty()) {
+          throw new AccessDeniedException("Scope roles are empty.");
+      }
+      boolean hasAtLeastOneAccess = scopeRoles.stream()
+              .anyMatch(scope -> checkScopeAccess(scope, userDetails));
+      if (!hasAtLeastOneAccess) {
+          log.debug("User details [{}] with authorities [{}] does not have required roles for the defined scopes {}. "
+                          + "Denying access.",
+                  userDetails.getUsername(), userDetails.getAuthorities(), scopeRoles);
+          throw new AccessDeniedException("User details doesn't have any of the required roles in "
+                  + "any of the required scopes.");
+      }
   }
 
   /**
-   * Builds a {@link ScopeAccessCheck} for a given scope type and associated roles
-   * by invoking the matching getter method from the current object.
+   * Checks if the given user Details have access to the given scope definition
    *
-   * @param entry       a map entry containing the scope type and required roles
+   * @param scope       Scope definition
    * @param userDetails the user for whom access is being evaluated
-   * @return a {@link ScopeAccessCheck} indicating whether access is granted for that scope
+   * @return a {@link boolean} indicating whether access is granted for that scope
    */
-  default ScopeAccessCheck createScopeAccessCheck(Map.Entry<String, String[]> entry,
-                                          UserDetails userDetails) {
-    String scopeType = entry.getKey();
-    String[] requiredRoles = entry.getValue();
-
+  default boolean checkScopeAccess(ScopeDefinition scope,
+                                   UserDetails userDetails) {
+    String scopeType = scope.scopeType();
+    String[] requiredRoles = scope.roles();
     Method method = findMethodForScope(scopeType);
-    if (method == null) {
-      log.debug("No method found for scope type: {}", scopeType);
-      return new ScopeAccessCheck(false);
-    }
-
+      if (Objects.isNull(method)) {
+          throw new AccessDeniedException(String.format("No method found for scope type: %s", scopeType));
+      }
     try {
       method.setAccessible(true); // Ensure method is accessible
       Object scopeObject = method.invoke(this);
-      return new ScopeAccessCheck(
-          checkScopeAccess(userDetails, scopeObject, scopeType, requiredRoles)
-      );
+      return checkScopeAccess(userDetails, scopeObject, scopeType, requiredRoles);
     } catch (Exception e) {
-      log.debug("Error invoking method for scope {}: {}", scopeType, e.getMessage());
-      return new ScopeAccessCheck(false);
-    }
-  }
-
-  /**
-   * Wrapper class for a boolean result representing whether access is granted or denied.
-   */
-  class ScopeAccessCheck {
-    private final boolean hasAccess;
-
-    ScopeAccessCheck(boolean hasAccess) {
-      this.hasAccess = hasAccess;
-    }
-
-    public boolean hasAccess() {
-      return hasAccess;
+      throw new AccessDeniedException(String
+              .format("Error invoking method for scope %s: %s", scopeType, e.getMessage()));
     }
   }
 
@@ -146,84 +135,33 @@ public interface Accessible {
   static boolean checkScopeAccess(UserDetails userDetails, Object scopeObject,
                                    String scopeType, String[] requiredRoles) {
 
-    if (userDetails == null || scopeObject == null || scopeType == null || requiredRoles == null) {
-      return false;
-    }
 
-    return parseAuthorities(userDetails.getAuthorities())
-        .stream()
-        .filter(authority -> authority.getScopeType().equals(scopeType))
-        .anyMatch(authority ->
-            Arrays.asList(requiredRoles).contains(authority.getRole()) &&
-                checkObjectAssociation(scopeObject, authority.getResourceId())
-        );
-  }
+      if (Objects.isNull(userDetails)) {
+          throw new AccessDeniedException("User details is null.");
+      }
+      if (Objects.isNull(scopeObject)) {
+          throw new AccessDeniedException("Scope object is null.");
+      }
+      if (Objects.isNull(scopeType) || scopeType.isEmpty()) {
+          throw new AccessDeniedException("Scope roles are empty.");
+      }
+      if (Objects.isNull(requiredRoles)) {
+          throw new AccessDeniedException("Scope roles are empty.");
+      }
 
-  /**
-   * Parses a collection of {@link GrantedAuthority} into a list of {@link ScopeAuthority}
-   * by extracting scope, role, and resource ID.
-   *
-   * @param authorities the user's authorities to be parsed
-   * @return a list of valid {@link ScopeAuthority} instances
-   */
-  static List<ScopeAuthority> parseAuthorities(
-      Collection<? extends GrantedAuthority> authorities) {
-    return authorities.stream()
-        .map(authority -> parseAuthority(authority.getAuthority()))
-        .filter(Objects::nonNull)
-        .collect(Collectors.toList());
-  }
-
-  /**
-   * Parses a single authority string in the format {@code ROLE_<SCOPE>_<ROLE>_<RESOURCE_ID>}
-   * into a {@link ScopeAuthority} object.
-   *
-   * @param authority the authority string
-   * @return a {@link ScopeAuthority} if the format is valid, or {@code null} otherwise
-   */
-  static ScopeAuthority parseAuthority(String authority) {
-    if (authority == null || !authority.startsWith("ROLE_")) {
-      return null;
-    }
-
-    String[] parts = authority.substring(5).split("_", 3);
-    if (parts.length != 3) {
-      log.debug("Invalid authority format: {}", authority);
-      return null;
-    }
-
-    return new ScopeAuthority(
-        parts[0].toLowerCase(),
-        parts[1],
-        parts[2]
-    );
-  }
-
-  /**
-   * Parsed representation of a user's authority string, broken into scope type, role, and resource ID.
-   */
-  class ScopeAuthority {
-    private final String scopeType;
-    private final String role;
-    private final String resourceId;
-
-    ScopeAuthority(String scopeType, String role, String resourceId) {
-      this.scopeType = scopeType;
-      this.role = role;
-      this.resourceId = resourceId;
-    }
-
-    public String getScopeType() {
-      return scopeType;
-    }
-
-    public String getRole() {
-      return role;
-    }
-
-    public String getResourceId() {
-      return resourceId;
-    }
+      try {
+          List<String> requiredRolesList = Arrays.asList(requiredRoles);
+          List<ScopeAuthority> scopeAuthorities = parseAuthorities(userDetails.getAuthorities());
+          return scopeAuthorities
+                  .stream()
+                  .filter(authority -> authority.getScopeType().equals(scopeType))
+                  .anyMatch(authority ->
+                          requiredRolesList.contains(authority.getRole())
+                                  && checkObjectAssociation(scopeObject, authority.getResourceId())
+                  );
+      } catch (InvalidAuthorityException e) {
+          throw new AccessDeniedException("Access was denied because there was an invalid authority.");
+      }
   }
 
   /**
@@ -238,13 +176,11 @@ public interface Accessible {
     if (authorityResourceId == null) {
       return false;
     }
-
     if (scopeObject instanceof Identifiable) {
       Identifiable identifiable = (Identifiable) scopeObject;
       String scopeObjectId = identifiable.getId().toString();
       return authorityResourceId.equals(scopeObjectId);
     }
-
     log.debug("Object of type {} does not implement Identifiable", scopeObject.getClass());
     return false;
   }

@@ -93,19 +93,10 @@ public class GuardResourceAspect {
       ScopeDefinition[] scopes = guardResource.scopes();
       Map<UserResolution, List<ScopeDefinition>> groupedScopes = groupScopesDefinitionsByUserResolution(scopes);
 
-      boolean allGroupedScopedHaveAllowedAccess = true;
       for (Map.Entry<UserResolution, List<ScopeDefinition>> entry : groupedScopes.entrySet()) {
         UserResolution key = entry.getKey();
         UserDetails userDetails = resolveUserDetails(key, method, invocation.getArguments());
-
-        if (!validateScopes(entry.getValue(), userDetails, result)) {
-          allGroupedScopedHaveAllowedAccess = false;
-          break; // Fail if any scope group denies access
-        }
-      }
-
-      if (!allGroupedScopedHaveAllowedAccess) {
-        throw new AccessDeniedException("Access denied by one or more scope groups");
+        validateScopes(entry.getValue(), userDetails, result);
       }
 
       return result;
@@ -211,19 +202,14 @@ public class GuardResourceAspect {
    * @param scopes the list of scopes to validate
    * @param userDetails the user details to validate access for
    * @param result the method result object(s)
-   * @return true if access is granted for all checked scopes, false otherwise
    */
-  private boolean validateScopes(List<ScopeDefinition> scopes, UserDetails userDetails, Object result) {
+  private void validateScopes(List<ScopeDefinition> scopes, UserDetails userDetails, Object result) {
     if (result instanceof Iterable<?>) {
-      boolean ret = true;
       for (Object item : (Iterable<?>) result) {
-        if (scopes.stream().noneMatch(scope -> validateSingleObjectForScope(scope, item, userDetails))) {
-          ret = false;
-        }
+        validateSingleObjectForScopes(scopes, item, userDetails);
       }
-      return ret;
     } else {
-      return scopes.stream().anyMatch(scope -> validateSingleObjectForScope(scope, result, userDetails));
+      validateSingleObjectForScopes(scopes, result, userDetails);
     }
   }
 
@@ -234,21 +220,17 @@ public class GuardResourceAspect {
    * The resource object must implement {@link Accessible} interface.
    * </p>
    *
-   * @param scope the scope definition to validate
+   * @param scopes the list of scopes to validate
    * @param result the resource object to check access against
    * @param userDetails the user details
-   * @return true if access is granted, false otherwise
    * @throws AccessDeniedException if the resource object is invalid
    */
-  private boolean validateSingleObjectForScope(ScopeDefinition scope, Object result, UserDetails userDetails) {
+  private void validateSingleObjectForScopes(List<ScopeDefinition> scopes, Object result, UserDetails userDetails) {
     if (result instanceof Accessible) {
       Accessible accessible = (Accessible) result;
-      Map<String, String[]> scopeRoles = new HashMap<>();
-      scopeRoles.put(scope.scopeType(), scope.roles());
-      return accessible.isAccessibleBy(userDetails, scopeRoles);
+      accessible.isAccessibleBy(userDetails, scopes);
     } else {
-      log.warn("Resource does not implement Accessible interface");
-      throw new AccessDeniedException("Invalid resource type for scope " + scope.scopeType());
+      throw new AccessDeniedException("Resource does not implement Accessible interface");
     }
   }
 
