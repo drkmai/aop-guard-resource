@@ -62,7 +62,7 @@ public class ScopeAuthority {
             }
             return new ScopeAuthority(parts[0].toLowerCase(), parts[1], parts[2]);
         } catch (Exception e) {
-            throw new InvalidAuthorityException(String.format("Authority %s is invalid.", authority));
+            throw new InvalidAuthorityException(String.format("Authority %s is invalid.", authority), e);
         }
 
     }

@@ -101,14 +101,8 @@ public class GuardResourceAspect {
 
       return result;
 
-    } catch (AccessDeniedException e) {
-      log.warn("Access denied: {}", e.getMessage());
-      throw e;
     } catch (Exception e) {
-      log.warn("Unexpected error during security check", e);
-      throw e;
-    } catch (Error e) {
-      log.warn("Unexpected runtime error during security check", e);
+      log.warn("Access denied: {}", e.getMessage());
       throw e;
     }
   }
