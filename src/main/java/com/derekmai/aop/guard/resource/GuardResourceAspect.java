@@ -2,6 +2,7 @@ package com.derekmai.aop.guard.resource;
 
 import com.derekmai.aop.guard.resource.scope.Accessible;
 import com.derekmai.aop.guard.resource.scope.ScopeDefinition;
+import com.derekmai.aop.guard.resource.scope.UserResolution;
 import com.derekmai.aop.guard.resource.user.DefaultUserDetailsResolver;
 import com.derekmai.aop.guard.resource.user.UserDetailsResolver;
 import org.aopalliance.intercept.MethodInvocation;
@@ -80,7 +81,7 @@ public class GuardResourceAspect {
 
       Object result = invocation.proceed();
       if (Objects.isNull(result)) {
-        log.warn("Method returned null result");
+        log.warn("Method returned null result. There's nothing to Guard.");
         return null;
       }
 
@@ -90,33 +91,18 @@ public class GuardResourceAspect {
       }
 
       ScopeDefinition[] scopes = guardResource.scopes();
-      Map<ScopeKey, List<ScopeDefinition>> groupedScopes = groupScopesByResolution(scopes);
+      Map<UserResolution, List<ScopeDefinition>> groupedScopes = groupScopesDefinitionsByUserResolution(scopes);
 
-      boolean allGroupedScopedHaveAllowedAccess = true;
-      for (Map.Entry<ScopeKey, List<ScopeDefinition>> entry : groupedScopes.entrySet()) {
-        ScopeKey key = entry.getKey();
+      for (Map.Entry<UserResolution, List<ScopeDefinition>> entry : groupedScopes.entrySet()) {
+        UserResolution key = entry.getKey();
         UserDetails userDetails = resolveUserDetails(key, method, invocation.getArguments());
-
-        if (!validateScopes(entry.getValue(), userDetails, result)) {
-          allGroupedScopedHaveAllowedAccess = false;
-          break; // Fail if any scope group denies access
-        }
-      }
-
-      if (!allGroupedScopedHaveAllowedAccess) {
-        throw new AccessDeniedException("Access denied by one or more scope groups");
+        validateScopes(entry.getValue(), userDetails, result);
       }
 
       return result;
 
-    } catch (AccessDeniedException e) {
-      log.warn("Access denied: {}", e.getMessage());
-      throw e;
     } catch (Exception e) {
-      log.warn("Unexpected error during security check", e);
-      throw e;
-    } catch (Error e) {
-      log.warn("Unexpected runtime error during security check", e);
+      log.warn("Access denied: {}", e.getMessage());
       throw e;
     }
   }
@@ -126,17 +112,17 @@ public class GuardResourceAspect {
    * user ID parameter name and user resolver class.
    *
    * @param scopes array of scope definitions from the annotation
-   * @return a map grouping scopes by their {@link ScopeKey}
+   * @return a map grouping scopes by their {@link UserResolution}
    */
-  private Map<ScopeKey, List<ScopeDefinition>> groupScopesByResolution(ScopeDefinition[] scopes) {
+  private Map<UserResolution, List<ScopeDefinition>> groupScopesDefinitionsByUserResolution(ScopeDefinition[] scopes) {
     return Arrays.stream(scopes)
             .collect(Collectors.groupingBy(
-                    scope -> new ScopeKey(scope.userIdParam(), scope.userResolver())
+                    scope -> new UserResolution(scope.userIdParam(), scope.userResolver())
             ));
   }
 
   /**
-   * Resolves {@link UserDetails} based on the given {@link ScopeKey} configuration,
+   * Resolves {@link UserDetails} based on the given {@link UserResolution} configuration,
    * the intercepted method, and its arguments.
    *
    * <p>
@@ -144,16 +130,18 @@ public class GuardResourceAspect {
    * user details from the method parameter; otherwise, resolves from the Spring Security context.
    * </p>
    *
-   * @param key the scope key defining user resolution parameters
+   * @param userResolution the user resolution
    * @param method the intercepted method
    * @param arguments the method arguments
    * @return the resolved user details
    * @throws AccessDeniedException if user details cannot be resolved
    */
-  private UserDetails resolveUserDetails(ScopeKey key, Method method, Object[] arguments) throws AccessDeniedException {
+  private UserDetails resolveUserDetails(UserResolution userResolution, Method method,
+                                         Object[] arguments) throws AccessDeniedException {
     try {
-      if (!key.userIdParam.isEmpty() && !key.userResolver.equals(DefaultUserDetailsResolver.class)) {
-        return resolveUserDetailsFromParam(method, arguments, key);
+      if (!userResolution.getUserIdParam().isEmpty()
+              && !userResolution.getUserResolver().equals(DefaultUserDetailsResolver.class)) {
+        return resolveUserDetailsFromParam(userResolution, method, arguments);
       } else {
         return resolveDefaultUserDetails();
       }
@@ -169,16 +157,17 @@ public class GuardResourceAspect {
    *
    * @param method the intercepted method
    * @param arguments the method arguments
-   * @param key the scope key containing user resolution info
+   * @param userResolution the User Resolution
    * @return resolved user details
    * @throws AccessDeniedException if the user ID parameter is not found or resolution fails
    */
-  private UserDetails resolveUserDetailsFromParam(Method method, Object[] arguments, ScopeKey key) throws AccessDeniedException {
+  private UserDetails resolveUserDetailsFromParam(UserResolution userResolution, Method method,
+                                                   Object[] arguments) throws AccessDeniedException {
     for (int i = 0; i < method.getParameterCount(); i++) {
       Parameter parameter = method.getParameters()[i];
-      if (parameter.getName().equals(key.userIdParam)) {
+      if (parameter.getName().equals(userResolution.getUserIdParam())) {
         Object userId = arguments[i];
-        UserDetailsResolver userDetailsResolver = context.getBean(key.userResolver);
+        UserDetailsResolver userDetailsResolver = context.getBean(userResolution.getUserResolver());
         return userDetailsResolver.resolve(userId);
       }
     }
@@ -207,19 +196,14 @@ public class GuardResourceAspect {
    * @param scopes the list of scopes to validate
    * @param userDetails the user details to validate access for
    * @param result the method result object(s)
-   * @return true if access is granted for all checked scopes, false otherwise
    */
-  private boolean validateScopes(List<ScopeDefinition> scopes, UserDetails userDetails, Object result) {
+  private void validateScopes(List<ScopeDefinition> scopes, UserDetails userDetails, Object result) {
     if (result instanceof Iterable<?>) {
-      boolean ret = true;
       for (Object item : (Iterable<?>) result) {
-        if (scopes.stream().noneMatch(scope -> validateSingleObjectForScope(scope, item, userDetails))) {
-          ret = false;
-        }
+        validateSingleObjectForScopes(scopes, item, userDetails);
       }
-      return ret;
     } else {
-      return scopes.stream().anyMatch(scope -> validateSingleObjectForScope(scope, result, userDetails));
+      validateSingleObjectForScopes(scopes, result, userDetails);
     }
   }
 
@@ -230,48 +214,18 @@ public class GuardResourceAspect {
    * The resource object must implement {@link Accessible} interface.
    * </p>
    *
-   * @param scope the scope definition to validate
+   * @param scopes the list of scopes to validate
    * @param result the resource object to check access against
    * @param userDetails the user details
-   * @return true if access is granted, false otherwise
    * @throws AccessDeniedException if the resource object is invalid
    */
-  private boolean validateSingleObjectForScope(ScopeDefinition scope, Object result, UserDetails userDetails) {
+  private void validateSingleObjectForScopes(List<ScopeDefinition> scopes, Object result, UserDetails userDetails) {
     if (result instanceof Accessible) {
       Accessible accessible = (Accessible) result;
-      Map<String, String[]> scopeRoles = new HashMap<>();
-      scopeRoles.put(scope.scopeType(), scope.roles());
-      return accessible.isAccessibleBy(userDetails, scopeRoles);
+      accessible.isAccessibleBy(userDetails, scopes);
     } else {
-      log.warn("Resource does not implement Accessible interface");
-      throw new AccessDeniedException("Invalid resource type for scope " + scope.scopeType());
+      throw new AccessDeniedException("Resource does not implement Accessible interface");
     }
   }
 
-  /**
-   * Helper class representing a key to group scopes by user resolution parameters.
-   */
-  private static class ScopeKey {
-    final String userIdParam;
-    final Class<? extends UserDetailsResolver> userResolver;
-
-    ScopeKey(String userIdParam, Class<? extends UserDetailsResolver> userResolver) {
-      this.userIdParam = userIdParam;
-      this.userResolver = userResolver;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) return true;
-      if (o == null || getClass() != o.getClass()) return false;
-      ScopeKey scopeKey = (ScopeKey) o;
-      return Objects.equals(userIdParam, scopeKey.userIdParam) &&
-              Objects.equals(userResolver, scopeKey.userResolver);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(userIdParam, userResolver);
-    }
-  }
 }
