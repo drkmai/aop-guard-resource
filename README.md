@@ -1,10 +1,10 @@
-# 🛡️ GuardResource – Method-Level Authorization with AOP for Spring-based applications
+Method-Level Authorization with AOP for Spring-based applications
 
 **GuardResource** is a lightweight Java library using AOP in a Spring Context to provide declarative method-level access control. With an annotation you can set multiple scope/role definitions per method. It Integrates with Spring Security’s `UserDetails` and `GrantedAuthority` and custom user resolution with pluggable resolvers.
 
 ---
 
-## 📦 Installation
+## Installation
 
 Maven repository and Gradle distribution are still pending so feel free to compile it yourself and plug it in.
 
@@ -40,7 +40,7 @@ public Object secureWithCustomResolver(String myUserId) {
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Make sure Spring scans the beans from the library:
 
@@ -160,13 +160,13 @@ public class SubteamService {
 
 ---
 
-## 📋 Requirements
+## Requirements
 
 - Java 8+
 - Spring Framework
 
 ---
 
-## 📄 License
+## License
 
-MIT License © 2025 – [Derek Mai]
+MIT License © 2026 – [Derek Mai]
